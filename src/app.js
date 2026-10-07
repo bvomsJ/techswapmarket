@@ -1,29 +1,74 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { CONFIG } from './config.js';
 
-const supabase = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const supabase = createClient(
+  CONFIG.SUPABASE_URL,
+  CONFIG.SUPABASE_ANON_KEY
+);
 
 let products = [];
 let images = [];
 let pages = [];
 let reviews = [];
 let settings = { ...CONFIG };
-let cart = JSON.parse(localStorage.getItem('tsm_cart') || '{}');
 
-const $ = s => document.querySelector(s);
+let cart = {};
 
-const fmt = n =>
-  new Intl.NumberFormat('ru-RU').format(n) + ' ' + (settings.currency || '₽');
+try {
+  cart = JSON.parse(localStorage.getItem('tsm_cart') || '{}');
+} catch {
+  cart = {};
+}
 
-function toast(t) {
-  const e = $('#toast');
-  e.textContent = t;
-  e.classList.add('show');
-  setTimeout(() => e.classList.remove('show'), 2200);
+const $ = selector => document.querySelector(selector);
+
+const fmt = number =>
+  new Intl.NumberFormat('ru-RU').format(Number(number) || 0) +
+  ' ' +
+  (settings.currency || '₽');
+
+function toast(message) {
+  const element = $('#toast');
+
+  if (!element) return;
+
+  element.textContent = message;
+  element.classList.add('show');
+
+  setTimeout(() => {
+    element.classList.remove('show');
+  }, 3000);
+}
+
+function saveCart() {
+  localStorage.setItem(
+    'tsm_cart',
+    JSON.stringify(cart)
+  );
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(
+    /[&<>"']/g,
+    character =>
+      ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      }[character])
+  );
 }
 
 async function load() {
-  const [p, i, pg, r, s] = await Promise.all([
+  const [
+    productsResponse,
+    imagesResponse,
+    pagesResponse,
+    reviewsResponse,
+    settingsResponse
+  ] = await Promise.all([
     supabase
       .from('products')
       .select('*')
@@ -44,7 +89,9 @@ async function load() {
       .from('reviews')
       .select('*')
       .eq('is_visible', true)
-      .order('created_at', { ascending: false }),
+      .order('created_at', {
+        ascending: false
+      }),
 
     supabase
       .from('site_settings')
@@ -53,25 +100,80 @@ async function load() {
       .maybeSingle()
   ]);
 
-  products = p.data || [];
-  images = i.data || [];
-  pages = pg.data || [];
-  reviews = r.data || [];
+  if (productsResponse.error) {
+    console.error(
+      'Products error:',
+      productsResponse.error
+    );
+  }
+
+  if (imagesResponse.error) {
+    console.error(
+      'Images error:',
+      imagesResponse.error
+    );
+  }
+
+  if (pagesResponse.error) {
+    console.error(
+      'Pages error:',
+      pagesResponse.error
+    );
+  }
+
+  if (reviewsResponse.error) {
+    console.error(
+      'Reviews error:',
+      reviewsResponse.error
+    );
+  }
+
+  if (settingsResponse.error) {
+    console.error(
+      'Settings error:',
+      settingsResponse.error
+    );
+  }
+
+  products = productsResponse.data || [];
+  images = imagesResponse.data || [];
+  pages = pagesResponse.data || [];
+  reviews = reviewsResponse.data || [];
 
   settings = {
     ...settings,
-    ...(s.data || {})
+    ...(settingsResponse.data || {})
   };
 
-  $('#tagline').textContent = settings.tagline;
-  $('#footerTagline').textContent = settings.tagline;
-  $('#year').textContent = new Date().getFullYear();
+  if ($('#tagline')) {
+    $('#tagline').textContent =
+      settings.tagline || '';
+  }
 
-  document.title = settings.seo_title || settings.site_name;
+  if ($('#footerTagline')) {
+    $('#footerTagline').textContent =
+      settings.tagline || '';
+  }
 
-  document.querySelector(
-    'meta[name=description]'
-  ).content = settings.seo_description || '';
+  if ($('#year')) {
+    $('#year').textContent =
+      new Date().getFullYear();
+  }
+
+  document.title =
+    settings.seo_title ||
+    settings.site_name ||
+    'techswapmarket';
+
+  const description =
+    document.querySelector(
+      'meta[name="description"]'
+    );
+
+  if (description) {
+    description.content =
+      settings.seo_description || '';
+  }
 
   renderNav();
   renderSeries();
@@ -84,159 +186,261 @@ async function load() {
 function renderNav() {
   const nav = $('#nav');
 
-  nav.innerHTML =
-    '<a href="./">Каталог</a>' +
-    pages
-      .filter(x => x.is_visible && x.show_in_nav)
+  if (nav) {
+    nav.innerHTML =
+      '<a href="./">Каталог</a>' +
+      pages
+        .filter(
+          page =>
+            page.is_visible &&
+            page.show_in_nav
+        )
+        .map(
+          page =>
+            `<a href="?page=${encodeURIComponent(
+              page.slug
+            )}">${escapeHtml(
+              page.title
+            )}</a>`
+        )
+        .join('');
+  }
+
+  const footerPages = $('#footerPages');
+
+  if (footerPages) {
+    footerPages.innerHTML = pages
+      .filter(page => page.is_visible)
       .map(
-        p =>
-          `<a href="?page=${encodeURIComponent(p.slug)}">${esc(
-            p.title
+        page =>
+          `<a href="?page=${encodeURIComponent(
+            page.slug
+          )}">${escapeHtml(
+            page.title
           )}</a>`
       )
       .join('');
-
-  $('#footerPages').innerHTML = pages
-    .filter(x => x.is_visible)
-    .map(
-      p =>
-        `<a href="?page=${encodeURIComponent(p.slug)}">${esc(
-          p.title
-        )}</a>`
-    )
-    .join('');
+  }
 }
 
 function renderSeries() {
-  const vals = [...new Set(products.map(p => p.series))];
+  const select = $('#series');
 
-  $('#series').innerHTML =
+  if (!select) return;
+
+  const values = [
+    ...new Set(
+      products.map(product => product.series)
+    )
+  ];
+
+  select.innerHTML =
     '<option value="">Все серии</option>' +
-    vals.map(x => `<option>${esc(x)}</option>`).join('');
+    values
+      .map(
+        value =>
+          `<option value="${escapeHtml(
+            value
+          )}">${escapeHtml(value)}</option>`
+      )
+      .join('');
 }
 
-function filtered() {
-  let a = [...products];
+function filteredProducts() {
+  let result = [...products];
 
-  const q = $('#search').value.toLowerCase().trim();
-  const ser = $('#series').value;
-  const st = $('#storage').value;
-  const co = $('#condition').value;
-  const max =
-    Number($('#maxPrice').value) || Infinity;
+  const searchElement = $('#search');
+  const seriesElement = $('#series');
+  const storageElement = $('#storage');
+  const conditionElement = $('#condition');
+  const maxPriceElement = $('#maxPrice');
+  const sortElement = $('#sort');
 
-  if (q) {
-    a = a.filter(p =>
-      `${p.name} ${p.series} ${p.model} ${p.color} ${p.storage_gb}`
+  const search = (
+    searchElement?.value || ''
+  )
+    .toLowerCase()
+    .trim();
+
+  const series =
+    seriesElement?.value || '';
+
+  const storage =
+    storageElement?.value || '';
+
+  const condition =
+    conditionElement?.value || '';
+
+  const maxPrice =
+    Number(maxPriceElement?.value) ||
+    Infinity;
+
+  if (search) {
+    result = result.filter(product =>
+      `${product.name} ${product.series} ${product.model} ${product.color} ${product.storage_gb}`
         .toLowerCase()
-        .includes(q)
+        .includes(search)
     );
   }
 
-  if (ser) {
-    a = a.filter(p => p.series === ser);
+  if (series) {
+    result = result.filter(
+      product => product.series === series
+    );
   }
 
-  if (st) {
-    a = a.filter(p => String(p.storage_gb) === st);
+  if (storage) {
+    result = result.filter(
+      product =>
+        String(product.storage_gb) ===
+        String(storage)
+    );
   }
 
-  if (co) {
-    a = a.filter(p => p.condition === co);
+  if (condition) {
+    result = result.filter(
+      product =>
+        product.condition === condition
+    );
   }
 
-  a = a.filter(p => Number(p.price) <= max);
+  result = result.filter(
+    product =>
+      Number(product.price) <= maxPrice
+  );
 
-  const sort = $('#sort').value;
+  const sort = sortElement?.value || '';
 
   if (sort === 'priceAsc') {
-    a.sort((x, y) => x.price - y.price);
+    result.sort(
+      (a, b) => a.price - b.price
+    );
   }
 
   if (sort === 'priceDesc') {
-    a.sort((x, y) => y.price - x.price);
-  }
-
-  if (sort === 'new') {
-    a.sort(
-      (x, y) =>
-        new Date(y.created_at) -
-        new Date(x.created_at)
+    result.sort(
+      (a, b) => b.price - a.price
     );
   }
 
-  return a;
+  if (sort === 'new') {
+    result.sort(
+      (a, b) =>
+        new Date(b.created_at) -
+        new Date(a.created_at)
+    );
+  }
+
+  return result;
 }
 
 function renderProducts() {
-  const a = filtered();
+  const result = filteredProducts();
 
-  $('#resultCount').textContent =
-    `${a.length} ${
-      a.length === 1
+  const resultCount = $('#resultCount');
+
+  if (resultCount) {
+    const word =
+      result.length === 1
         ? 'устройство'
-        : a.length < 5
+        : result.length < 5
         ? 'устройства'
-        : 'устройств'
-    }`;
+        : 'устройств';
 
-  $('#emptyState').classList.toggle(
-    'hidden',
-    a.length > 0
-  );
+    resultCount.textContent =
+      `${result.length} ${word}`;
+  }
 
-  $('#productGrid').innerHTML = a
-    .map(p => {
-      const im =
-        images.find(x => x.product_id === p.id)
-          ?.public_url ||
+  const emptyState = $('#emptyState');
+
+  if (emptyState) {
+    emptyState.classList.toggle(
+      'hidden',
+      result.length > 0
+    );
+  }
+
+  const grid = $('#productGrid');
+
+  if (!grid) return;
+
+  grid.innerHTML = result
+    .map(product => {
+      const image =
+        images.find(
+          item =>
+            item.product_id === product.id
+        )?.public_url ||
         'assets/phone-placeholder.svg';
 
       return `
-        <article class="card" data-product="${p.id}">
+        <article
+          class="card"
+          data-product="${product.id}"
+        >
+
           <div class="badges">
+
             ${
-              p.featured
-                ? '<span class="badge">Рекомендуем</span>'
+              product.featured
+                ? `
+                  <span class="badge">
+                    Рекомендуем
+                  </span>
+                `
                 : ''
             }
 
             ${
-              p.stock <= 0
-                ? '<span class="badge">Нет в наличии</span>'
+              Number(product.stock) <= 0
+                ? `
+                  <span class="badge">
+                    Нет в наличии
+                  </span>
+                `
                 : ''
             }
+
           </div>
 
           <img
-            src="${im}"
-            alt="${esc(p.name)}"
+            src="${image}"
+            alt="${escapeHtml(
+              product.name
+            )}"
             loading="lazy"
           >
 
           <div class="name">
-            ${esc(p.name)}
+            ${escapeHtml(
+              product.name
+            )}
           </div>
 
           <div class="desc">
-            ${esc(
-              p.short_description ||
-                p.description ||
+            ${escapeHtml(
+              product.short_description ||
+                product.description ||
                 'Подробности внутри карточки'
             )}
           </div>
 
           <div class="price">
-            ${fmt(p.price)}
+            ${fmt(product.price)}
 
             ${
-              p.old_price
-                ? `<span class="old">${fmt(
-                    p.old_price
-                  )}</span>`
+              product.old_price
+                ? `
+                  <span class="old">
+                    ${fmt(
+                      product.old_price
+                    )}
+                  </span>
+                `
                 : ''
             }
           </div>
+
         </article>
       `;
     })
@@ -244,87 +448,120 @@ function renderProducts() {
 
   document
     .querySelectorAll('[data-product]')
-    .forEach(e => {
-      e.onclick = () =>
-        openProduct(e.dataset.product);
+    .forEach(element => {
+      element.onclick = () =>
+        openProduct(
+          element.dataset.product
+        );
     });
 }
 
 function openProduct(id) {
-  const p = products.find(x => x.id === id);
-  const ims = images.filter(
-    x => x.product_id === id
+  const product = products.find(
+    item => item.id === id
   );
 
-  if (!p) return;
+  if (!product) return;
 
-  const first =
-    ims[0]?.public_url ||
+  const productImages = images.filter(
+    image =>
+      image.product_id === id
+  );
+
+  const firstImage =
+    productImages[0]?.public_url ||
     'assets/phone-placeholder.svg';
 
-  $('#modalBody').innerHTML = `
+  const modalBody = $('#modalBody');
+
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
     <div class="product-detail">
 
       <div>
+
         <img
           id="detailImage"
-          src="${first}"
-          alt="${esc(p.name)}"
+          src="${firstImage}"
+          alt="${escapeHtml(
+            product.name
+          )}"
         >
 
         <div class="thumbs">
-          ${ims
+
+          ${productImages
             .map(
-              i => `
+              image => `
                 <img
-                  src="${i.public_url}"
+                  src="${image.public_url}"
                   alt=""
-                  data-thumb="${i.public_url}"
+                  data-thumb="${image.public_url}"
                 >
               `
             )
             .join('')}
+
         </div>
+
       </div>
 
       <div>
 
         <span class="eyebrow">
-          ${esc(p.series)}
+          ${escapeHtml(
+            product.series || ''
+          )}
         </span>
 
         <h2>
-          ${esc(p.name)}
+          ${escapeHtml(
+            product.name
+          )}
         </h2>
 
         <p
           class="tag"
           style="text-align:left"
         >
-          ${esc(p.description || '')}
+          ${escapeHtml(
+            product.description || ''
+          )}
         </p>
 
         <div
           class="price"
           style="font-size:1.4rem"
         >
-          ${fmt(p.price)}
+          ${fmt(product.price)}
         </div>
 
         <div class="specs">
-          ${specRows(p)}
+          ${specRows(product)}
         </div>
 
-        <p
-          class="tag"
-          style="text-align:left"
-        >
-          ${esc(p.included || '')}
-        </p>
+        ${
+          product.included
+            ? `
+              <p
+                class="tag"
+                style="text-align:left"
+              >
+                ${escapeHtml(
+                  product.included
+                )}
+              </p>
+            `
+            : ''
+        }
 
         <button
           class="btn solid"
-          style="width:100%;margin-top:12px"
+          style="
+            width:100%;
+            margin-top:12px
+          "
           id="addDetail"
         >
           Добавить в корзину
@@ -337,47 +574,73 @@ function openProduct(id) {
 
   document
     .querySelectorAll('[data-thumb]')
-    .forEach(x => {
-      x.onclick = () =>
-        ($('#detailImage').src =
-          x.dataset.thumb);
+    .forEach(element => {
+      element.onclick = () => {
+        const detailImage =
+          $('#detailImage');
+
+        if (detailImage) {
+          detailImage.src =
+            element.dataset.thumb;
+        }
+      };
     });
 
-  $('#addDetail').onclick = () => {
-    addCart(id);
-    closeModal();
-  };
+  const addButton =
+    $('#addDetail');
+
+  if (addButton) {
+    addButton.onclick = () => {
+      addCart(id);
+      closeModal();
+    };
+  }
 
   openModal();
 }
 
-function specRows(p) {
+function specRows(product) {
   return [
-    ['Состояние', p.condition],
+    [
+      'Состояние',
+      product.condition || '—'
+    ],
     [
       'Память',
-      p.storage_gb
-        ? p.storage_gb + ' ГБ'
+      product.storage_gb
+        ? `${product.storage_gb} ГБ`
         : '—'
     ],
-    ['Цвет', p.color || '—'],
+    [
+      'Цвет',
+      product.color || '—'
+    ],
     [
       'Аккумулятор',
-      p.battery_percent
-        ? p.battery_percent + '%'
+      product.battery_percent
+        ? `${product.battery_percent}%`
         : '—'
     ],
     [
       'Гарантия',
-      p.warranty || 'Уточняется'
+      product.warranty ||
+        'Уточняется'
     ]
   ]
     .map(
-      ([a, b]) =>
-        `<div class="spec-row">
-          <span>${a}</span>
-          <strong>${esc(String(b))}</strong>
-        </div>`
+      ([label, value]) => `
+        <div class="spec-row">
+          <span>
+            ${escapeHtml(label)}
+          </span>
+
+          <strong>
+            ${escapeHtml(
+              String(value)
+            )}
+          </strong>
+        </div>
+      `
     )
     .join('');
 }
@@ -385,65 +648,85 @@ function specRows(p) {
 function addCart(id) {
   cart[id] = (cart[id] || 0) + 1;
 
-  localStorage.setItem(
-    'tsm_cart',
-    JSON.stringify(cart)
-  );
-
+  saveCart();
   renderCart();
+
   toast('Добавлено в корзину');
 }
 
 function renderCart() {
-  const n = Object.values(cart).reduce(
-    (a, b) => a + b,
-    0
-  );
+  const count =
+    Object.values(cart).reduce(
+      (sum, quantity) =>
+        sum + Number(quantity),
+      0
+    );
 
-  $('#cartCount').textContent = n;
-  $('#floatCount').textContent = n;
+  const cartCount = $('#cartCount');
+  const floatCount = $('#floatCount');
+
+  if (cartCount) {
+    cartCount.textContent = count;
+  }
+
+  if (floatCount) {
+    floatCount.textContent = count;
+  }
 }
 
 function openCart() {
-  const rows = Object.entries(cart).filter(
-    ([, q]) => q > 0
-  );
+  const rows =
+    Object.entries(cart).filter(
+      ([, quantity]) =>
+        Number(quantity) > 0
+    );
 
   let total = 0;
 
   const html = rows.length
     ? rows
-        .map(([id, q]) => {
-          const p = products.find(
-            x => x.id === id
-          );
+        .map(([id, quantity]) => {
+          const product =
+            products.find(
+              item => item.id === id
+            );
 
-          if (!p) return '';
+          if (!product) return '';
 
-          total += p.price * q;
+          const qty =
+            Number(quantity);
 
-          const im =
+          total +=
+            Number(product.price) * qty;
+
+          const image =
             images.find(
-              x => x.product_id === id
+              item =>
+                item.product_id === id
             )?.public_url ||
             'assets/phone-placeholder.svg';
 
           return `
             <div class="cart-row">
 
-              <img src="${im}">
+              <img
+                src="${image}"
+                alt=""
+              >
 
               <div class="grow">
 
                 <strong>
-                  ${esc(p.name)}
+                  ${escapeHtml(
+                    product.name
+                  )}
                 </strong>
 
                 <div
                   class="tag"
                   style="text-align:left"
                 >
-                  ${fmt(p.price)}
+                  ${fmt(product.price)}
                 </div>
 
               </div>
@@ -457,7 +740,7 @@ function openCart() {
                   −
                 </button>
 
-                ${q}
+                ${qty}
 
                 <button
                   class="step"
@@ -472,10 +755,20 @@ function openCart() {
           `;
         })
         .join('')
-    : '<div class="empty">Корзина пуста</div>';
+    : `
+        <div class="empty">
+          Корзина пуста
+        </div>
+      `;
 
-  $('#modalBody').innerHTML = `
-    <h2>Корзина</h2>
+  const modalBody = $('#modalBody');
+
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
+    <h2>
+      Корзина
+    </h2>
 
     ${html}
 
@@ -488,8 +781,13 @@ function openCart() {
         font-weight:600
       "
     >
-      <span>Итого</span>
-      <span>${fmt(total)}</span>
+      <span>
+        Итого
+      </span>
+
+      <span>
+        ${fmt(total)}
+      </span>
     </div>
 
     ${
@@ -509,66 +807,91 @@ function openCart() {
 
   document
     .querySelectorAll('[data-inc]')
-    .forEach(b => {
-      b.onclick = () =>
-        changeQty(b.dataset.inc, 1);
+    .forEach(button => {
+      button.onclick = () =>
+        changeQty(
+          button.dataset.inc,
+          1
+        );
     });
 
   document
     .querySelectorAll('[data-dec]')
-    .forEach(b => {
-      b.onclick = () =>
-        changeQty(b.dataset.dec, -1);
+    .forEach(button => {
+      button.onclick = () =>
+        changeQty(
+          button.dataset.dec,
+          -1
+        );
     });
 
-  if (rows.length) {
-    $('#checkout').onclick = checkoutForm;
+  const checkout =
+    $('#checkout');
+
+  if (checkout) {
+    checkout.onclick =
+      checkoutForm;
   }
 
   openModal();
 }
 
-function changeQty(id, d) {
-  cart[id] = (cart[id] || 0) + d;
+function changeQty(id, delta) {
+  cart[id] =
+    (cart[id] || 0) + delta;
 
   if (cart[id] <= 0) {
     delete cart[id];
   }
 
-  localStorage.setItem(
-    'tsm_cart',
-    JSON.stringify(cart)
-  );
-
+  saveCart();
   openCart();
   renderCart();
 }
 
 function checkoutForm() {
-  const total = Object.entries(cart).reduce(
-    (s, [id, q]) =>
-      s +
-      (products.find(p => p.id === id)?.price ||
-        0) *
-        q,
-    0
-  );
+  const total =
+    Object.entries(cart).reduce(
+      (sum, [id, quantity]) => {
+        const product =
+          products.find(
+            item => item.id === id
+          );
 
-  $('#modalBody').innerHTML = `
-    <h2>Оформление заказа</h2>
+        return (
+          sum +
+          (Number(
+            product?.price || 0
+          ) *
+            Number(quantity))
+        );
+      },
+      0
+    );
+
+  const modalBody =
+    $('#modalBody');
+
+  if (!modalBody) return;
+
+  modalBody.innerHTML = `
+    <h2>
+      Оформление заказа
+    </h2>
 
     <p
       class="tag"
       style="text-align:left"
     >
-      После отправки заказ сохранится в базе,
-      а вам откроется готовое сообщение
-      для Telegram.
+      После отправки заказ сохранится
+      в базе, а затем откроется готовое
+      сообщение для Telegram.
     </p>
 
     <div class="form-grid">
 
       <div>
+
         <label class="field">
           Имя *
         </label>
@@ -576,10 +899,13 @@ function checkoutForm() {
         <input
           class="input"
           id="cName"
+          autocomplete="name"
         >
+
       </div>
 
       <div>
+
         <label class="field">
           Телефон
         </label>
@@ -587,10 +913,14 @@ function checkoutForm() {
         <input
           class="input"
           id="cPhone"
+          type="tel"
+          autocomplete="tel"
         >
+
       </div>
 
       <div>
+
         <label class="field">
           Город
         </label>
@@ -598,10 +928,13 @@ function checkoutForm() {
         <input
           class="input"
           id="cCity"
+          autocomplete="address-level2"
         >
+
       </div>
 
       <div class="full">
+
         <label class="field">
           Комментарий
         </label>
@@ -611,6 +944,7 @@ function checkoutForm() {
           rows="4"
           class="input"
         ></textarea>
+
       </div>
 
     </div>
@@ -624,8 +958,15 @@ function checkoutForm() {
         font-weight:600
       "
     >
-      <span>Итого</span>
-      <span>${fmt(total)}</span>
+
+      <span>
+        Итого
+      </span>
+
+      <span>
+        ${fmt(total)}
+      </span>
+
     </div>
 
     <button
@@ -637,161 +978,412 @@ function checkoutForm() {
     </button>
   `;
 
-  $('#sendOrder').onclick = submitOrder;
+  const sendButton =
+    $('#sendOrder');
+
+  if (sendButton) {
+    sendButton.onclick =
+      submitOrder;
+  }
+}
+
+function generateOrderId() {
+  if (
+    typeof crypto !== 'undefined' &&
+    crypto.randomUUID
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return (
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+  ).replace(
+    /[xy]/g,
+    character => {
+      const random =
+        Math.random() * 16 | 0;
+
+      const value =
+        character === 'x'
+          ? random
+          : (random & 0x3) | 0x8;
+
+      return value.toString(16);
+    }
+  );
 }
 
 async function submitOrder() {
-  const name = $('#cName').value.trim();
+  const nameElement =
+    $('#cName');
+
+  const phoneElement =
+    $('#cPhone');
+
+  const cityElement =
+    $('#cCity');
+
+  const commentElement =
+    $('#cComment');
+
+  const sendButton =
+    $('#sendOrder');
+
+  const name =
+    nameElement?.value.trim() || '';
+
+  const phone =
+    phoneElement?.value.trim() || '';
+
+  const city =
+    cityElement?.value.trim() || '';
+
+  const comment =
+    commentElement?.value.trim() || '';
 
   if (!name) {
     toast('Укажите имя');
     return;
   }
 
-  const entries = Object.entries(cart).filter(
-    ([, q]) => q > 0
-  );
-
-  let total = 0;
-
-  const items = entries.map(([id, q]) => {
-    const p = products.find(
-      x => x.id === id
+  const entries =
+    Object.entries(cart).filter(
+      ([, quantity]) =>
+        Number(quantity) > 0
     );
 
-    total += p.price * q;
-
-    return {
-      product_id: p.id,
-      product_name: p.name,
-      price: p.price,
-      quantity: q
-    };
-  });
-
-  const { data, error } =
-    await supabase
-      .from('orders')
-      .insert({
-        customer_name: name,
-        customer_phone: $('#cPhone').value.trim(),
-        city: $('#cCity').value.trim(),
-        comment: $('#cComment').value.trim(),
-        total
-      })
-      .select()
-      .single();
-
-  if (error) {
-    toast('Не удалось сохранить заказ');
-    console.error(error);
+  if (!entries.length) {
+    toast('Корзина пуста');
     return;
   }
 
-  await supabase
+  let total = 0;
+
+  const items = [];
+
+  for (const [id, quantity] of entries) {
+    const product =
+      products.find(
+        item => item.id === id
+      );
+
+    if (!product) continue;
+
+    const qty =
+      Number(quantity);
+
+    const price =
+      Number(product.price) || 0;
+
+    total += price * qty;
+
+    items.push({
+      product_id: product.id,
+      product_name: product.name,
+      price,
+      quantity: qty
+    });
+  }
+
+  if (!items.length) {
+    toast(
+      'Не удалось найти товары в корзине'
+    );
+    return;
+  }
+
+  if (sendButton) {
+    sendButton.disabled = true;
+    sendButton.textContent =
+      'Отправляем...';
+  }
+
+  /*
+   * ВАЖНО:
+   *
+   * Мы сами создаём UUID заказа.
+   * Поэтому после INSERT нам НЕ нужно
+   * делать .select().single().
+   *
+   * Это позволяет обычному посетителю
+   * создать заказ через RLS, не получая
+   * права читать таблицу orders.
+   */
+
+  const orderId =
+    generateOrderId();
+
+  const orderReference =
+    orderId
+      .replace(/-/g, '')
+      .slice(0, 8)
+      .toUpperCase();
+
+  const {
+    error: orderError
+  } = await supabase
+    .from('orders')
+    .insert({
+      id: orderId,
+      customer_name: name,
+      customer_phone: phone,
+      customer_telegram: null,
+      city,
+      comment,
+      total
+    });
+
+  if (orderError) {
+    console.error(
+      'SUPABASE ORDER ERROR:',
+      orderError
+    );
+
+    if (sendButton) {
+      sendButton.disabled = false;
+      sendButton.textContent =
+        'Отправить заказ';
+    }
+
+    alert(
+      'Не удалось создать заказ.\n\n' +
+      (orderError.message ||
+        'Неизвестная ошибка') +
+      '\n\nКод: ' +
+      (orderError.code || '—')
+    );
+
+    return;
+  }
+
+  /*
+   * Добавляем позиции заказа.
+   */
+
+  const {
+    error: itemsError
+  } = await supabase
     .from('order_items')
     .insert(
-      items.map(x => ({
-        ...x,
-        order_id: data.id
+      items.map(item => ({
+        ...item,
+        order_id: orderId
       }))
     );
 
+  if (itemsError) {
+    console.error(
+      'SUPABASE ORDER ITEMS ERROR:',
+      itemsError
+    );
+
+    /*
+     * Удалять заказ автоматически здесь
+     * не пытаемся — пусть он останется
+     * в админке для контроля.
+     */
+
+    if (sendButton) {
+      sendButton.disabled = false;
+      sendButton.textContent =
+        'Отправить заказ';
+    }
+
+    alert(
+      'Заказ создан, но не удалось сохранить состав заказа.\n\n' +
+      (itemsError.message ||
+        'Неизвестная ошибка') +
+      '\n\nКод: ' +
+      (itemsError.code || '—')
+    );
+
+    return;
+  }
+
+  /*
+   * Формируем сообщение для магазина.
+   */
+
   const lines = items.map(
-    (x, i) =>
-      `${i + 1}) ${x.product_name} × ${
-        x.quantity
-      } — ${fmt(x.price * x.quantity)}`
+    (item, index) =>
+      `${index + 1}) ${
+        item.product_name
+      } × ${
+        item.quantity
+      } — ${fmt(
+        item.price *
+          item.quantity
+      )}`
   );
 
-  const text =
-    `Здравствуйте! Хочу оформить заказ №${data.order_number}.\n\n` +
+  const telegramUsername = (
+    settings.telegram_username ||
+    CONFIG.TELEGRAM_USERNAME ||
+    ''
+  ).replace(/^@/, '');
+
+  const telegramText =
+    `Здравствуйте! Новый заказ №${orderReference}.\n\n` +
     `${lines.join('\n')}\n\n` +
     `Итого: ${fmt(total)}\n\n` +
     `Имя: ${name}\n` +
-    `Телефон: ${$('#cPhone').value.trim()}\n` +
-    `Город: ${$('#cCity').value.trim()}\n` +
-    `Комментарий: ${$('#cComment').value.trim()}`;
+    `Телефон: ${
+      phone || 'не указан'
+    }\n` +
+    `Город: ${
+      city || 'не указан'
+    }\n` +
+    `Комментарий: ${
+      comment || 'нет'
+    }`;
+
+  /*
+   * Очищаем корзину.
+   */
 
   cart = {};
 
-  localStorage.removeItem('tsm_cart');
-
-  renderCart();
-  closeModal();
-
-  window.open(
-    `https://t.me/${
-      settings.telegram_username ||
-      CONFIG.TELEGRAM_USERNAME
-    }?text=${encodeURIComponent(text)}`,
-    '_blank'
+  localStorage.removeItem(
+    'tsm_cart'
   );
 
-  toast('Заказ создан');
+  renderCart();
+
+  /*
+   * Формируем Telegram URL.
+   */
+
+  if (telegramUsername) {
+    const telegramUrl =
+      `https://t.me/${telegramUsername}` +
+      `?text=${encodeURIComponent(
+        telegramText
+      )}`;
+
+    /*
+     * location.href вместо window.open().
+     *
+     * Это важно для iPhone и Telegram
+     * WebView: Safari/iOS часто блокирует
+     * window.open(), если он вызывается
+     * после await.
+     */
+
+    window.location.href =
+      telegramUrl;
+  } else {
+    closeModal();
+
+    alert(
+      'Заказ №' +
+        orderReference +
+        ' создан.\n\n' +
+        'Telegram магазина пока не настроен.'
+    );
+  }
 }
 
 function renderReviews() {
-  $('#reviews').innerHTML = reviews.length
-    ? reviews
-        .slice(0, 6)
-        .map(
-          r => `
-            <article class="review">
+  const container =
+    $('#reviews');
 
-              <div class="stars">
-                ${'★'.repeat(r.rating)}
-                ${'☆'.repeat(5 - r.rating)}
-              </div>
+  if (!container) return;
 
-              <strong>
-                ${esc(r.author_name)}
-              </strong>
+  if (!reviews.length) {
+    container.innerHTML =
+      '<p class="tag">Пока отзывов нет.</p>';
 
-              <p>
-                ${esc(r.text)}
-              </p>
+    return;
+  }
 
-            </article>
-          `
-        )
-        .join('')
-    : '<p class="tag">Пока отзывов нет.</p>';
+  container.innerHTML =
+    reviews
+      .slice(0, 6)
+      .map(
+        review => `
+          <article class="review">
+
+            <div class="stars">
+              ${'★'.repeat(
+                Number(
+                  review.rating
+                ) || 0
+              )}
+
+              ${'☆'.repeat(
+                5 -
+                  (Number(
+                    review.rating
+                  ) || 0)
+              )}
+            </div>
+
+            <strong>
+              ${escapeHtml(
+                review.author_name
+              )}
+            </strong>
+
+            <p>
+              ${escapeHtml(
+                review.text
+              )}
+            </p>
+
+          </article>
+        `
+      )
+      .join('');
 }
 
 function updateTelegram() {
-  const u = (
+  const username = (
     settings.telegram_username ||
-    CONFIG.TELEGRAM_USERNAME
+    CONFIG.TELEGRAM_USERNAME ||
+    ''
   ).replace(/^@/, '');
 
-  $('#tgFooter').href =
-    'https://t.me/' + u;
+  const footerTelegram =
+    $('#tgFooter');
+
+  if (footerTelegram) {
+    footerTelegram.href =
+      'https://t.me/' +
+      username;
+  }
 }
 
 function openModal() {
-  $('#modal').classList.add('open');
+  const modal = $('#modal');
+
+  if (modal) {
+    modal.classList.add('open');
+  }
 }
 
 function closeModal() {
-  $('#modal').classList.remove('open');
+  const modal = $('#modal');
+
+  if (modal) {
+    modal.classList.remove('open');
+  }
 }
 
-function esc(s) {
-  return String(s ?? '').replace(
-    /[&<>"']/g,
-    c =>
-      ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-      }[c])
-  );
+/*
+ * Search
+ */
+
+const search =
+  $('#search');
+
+if (search) {
+  search.oninput =
+    renderProducts;
 }
 
-$('#search').oninput = renderProducts;
+/*
+ * Filters
+ */
 
 [
   'series',
@@ -800,76 +1392,186 @@ $('#search').oninput = renderProducts;
   'maxPrice',
   'sort'
 ].forEach(id => {
-  $('#' + id).oninput = renderProducts;
+  const element =
+    $('#' + id);
+
+  if (element) {
+    element.oninput =
+      renderProducts;
+
+    element.onchange =
+      renderProducts;
+  }
 });
 
-$('#resetFilters').onclick = () => {
-  ['search', 'maxPrice'].forEach(
-    id => ($('#' + id).value = '')
-  );
+/*
+ * Reset filters
+ */
 
-  [
-    'series',
-    'storage',
-    'condition',
-    'sort'
-  ].forEach(
-    id =>
-      ($('#' + id).selectedIndex = 0)
-  );
+const resetFilters =
+  $('#resetFilters');
 
-  renderProducts();
-};
+if (resetFilters) {
+  resetFilters.onclick =
+    () => {
+      if ($('#search')) {
+        $('#search').value =
+          '';
+      }
 
-$('#filterToggle').onclick = () =>
-  $('#filters').classList.toggle('open');
+      if ($('#maxPrice')) {
+        $('#maxPrice').value =
+          '';
+      }
 
-$('#openCart').onclick = openCart;
-$('#cartFloat').onclick = openCart;
+      [
+        'series',
+        'storage',
+        'condition',
+        'sort'
+      ].forEach(id => {
+        const element =
+          $('#' + id);
 
-$('#modal').onclick = e => {
-  if (
-    e.target.id === 'modal' ||
-    e.target.hasAttribute('data-close')
-  ) {
-    closeModal();
-  }
-};
+        if (element) {
+          element.selectedIndex =
+            0;
+        }
+      });
+
+      renderProducts();
+    };
+}
+
+/*
+ * Mobile filters
+ */
+
+const filterToggle =
+  $('#filterToggle');
+
+if (filterToggle) {
+  filterToggle.onclick =
+    () => {
+      const filters =
+        $('#filters');
+
+      if (filters) {
+        filters.classList.toggle(
+          'open'
+        );
+      }
+    };
+}
+
+/*
+ * Cart buttons
+ */
+
+const openCartButton =
+  $('#openCart');
+
+if (openCartButton) {
+  openCartButton.onclick =
+    openCart;
+}
+
+const floatingCart =
+  $('#cartFloat');
+
+if (floatingCart) {
+  floatingCart.onclick =
+    openCart;
+}
+
+/*
+ * Modal close
+ */
+
+const modal =
+  $('#modal');
+
+if (modal) {
+  modal.onclick =
+    event => {
+      if (
+        event.target.id ===
+          'modal' ||
+        event.target.hasAttribute(
+          'data-close'
+        )
+      ) {
+        closeModal();
+      }
+    };
+}
+
+/*
+ * Page routes
+ */
 
 (async () => {
-  const params = new URLSearchParams(
-    location.search
-  );
+  try {
+    const params =
+      new URLSearchParams(
+        location.search
+      );
 
-  if (params.get('page')) {
+    const pageSlug =
+      params.get('page');
+
+    if (pageSlug) {
+      await load();
+
+      const page =
+        pages.find(
+          item =>
+            item.slug ===
+            pageSlug
+        );
+
+      if (page) {
+        const modalBody =
+          $('#modalBody');
+
+        if (modalBody) {
+          modalBody.innerHTML = `
+            <h2>
+              ${escapeHtml(
+                page.title
+              )}
+            </h2>
+
+            <div
+              style="
+                line-height:1.7;
+                color:var(--dim);
+                white-space:pre-wrap
+              "
+            >
+              ${escapeHtml(
+                page.content
+              )}
+            </div>
+          `;
+
+          openModal();
+
+          return;
+        }
+      }
+    }
+
     await load();
 
-    const p = pages.find(
-      x => x.slug === params.get('page')
+  } catch (error) {
+    console.error(
+      'APPLICATION ERROR:',
+      error
     );
 
-    if (p) {
-      $('#modalBody').innerHTML = `
-        <h2>${esc(p.title)}</h2>
-
-        <div
-          style="
-            line-height:1.7;
-            color:var(--dim);
-            white-space:pre-wrap
-          "
-        >
-          ${esc(p.content)}
-        </div>
-      `;
-
-      openModal();
-      return;
-    }
+    toast(
+      'Ошибка загрузки сайта'
+    );
   }
-
-  await load();
-})().catch(e => {
-  console.error(e);
-  toast('Проверьте настройки Supabase');
-});
+})();
